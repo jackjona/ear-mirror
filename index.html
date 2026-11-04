@@ -59,6 +59,8 @@ input[type=file]{display:none}
   <div class="row seg" role="group" aria-label="Voice">
     <button id="vOn" class="on">Voice guide on</button><button id="vOff">Voice off</button>
   </div>
+  <div class="row"><button id="vTest" style="flex:1">🔊 Test voice</button></div>
+  <p class="fine" id="vNote">No sound? Raise the volume, turn off silent mode on iPhone, then tap Test voice.</p>
   <button class="go" id="start">Start camera</button>
   <div class="row"><label class="btn" style="flex:1">Use a photo instead<input type="file" id="file" accept="image/*" capture="environment"></label></div>
   <p class="fine">Photo option: if the camera is blocked, take a picture with your phone’s camera app and pick it here. You’ll still get the check, without live voice guidance.</p>
@@ -87,6 +89,7 @@ input[type=file]{display:none}
   </div>
 </div>
 
+<label id="hl" style="position:fixed;left:-99px;top:0;opacity:0"><input type="checkbox" id="hc" switch></label>
 <canvas id="w" hidden></canvas>
 <script>
 (function(){
@@ -99,18 +102,36 @@ $('eL').onclick=function(){pick(0,0,'left')};$('eR').onclick=function(){pick(0,0
 $('vOn').onclick=function(){voice=true;$('vOn').classList.add('on');$('vOff').classList.remove('on')};
 $('vOff').onclick=function(){voice=false;$('vOff').classList.add('on');$('vOn').classList.remove('on');try{speechSynthesis.cancel()}catch(e){}};
 
+var torchOK=false,torchTried=false,voices=[],ac=null,ttsOK='speechSynthesis' in window;
+function loadVoices(){try{voices=speechSynthesis.getVoices()||[]}catch(e){}}
+if(ttsOK){loadVoices();try{speechSynthesis.onvoiceschanged=loadVoices}catch(e){}}
+function beep(f,d){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();if(ac.state==='suspended')ac.resume();var o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=.2;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d)}catch(e){}}
+function unlock(){beep(1,.01);if(ttsOK){try{var u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}}
+function speak(t){
+  if(!ttsOK){beep(660,.15);return}
+  try{
+    var busyNow=speechSynthesis.speaking||speechSynthesis.pending;
+    if(busyNow)speechSynthesis.cancel();
+    setTimeout(function(){
+      var u=new SpeechSynthesisUtterance(t);u.rate=1;u.volume=1;u.lang=navigator.language||'en-US';
+      var p=u.lang.slice(0,2),v=voices.filter(function(x){return x.lang&&x.lang.indexOf(p)===0})[0];if(v)u.voice=v;
+      speechSynthesis.speak(u);if(speechSynthesis.paused)speechSynthesis.resume();
+    },busyNow?120:0);
+  }catch(e){beep(660,.15)}
+}
 function say(t,force){
   $('say').textContent=t;
-  if(!voice||!('speechSynthesis' in window))return;
+  if(!voice)return;
   var now=Date.now();
   if(!force&&now-lastSpeak<3500)return;
-  try{speechSynthesis.cancel();var u=new SpeechSynthesisUtterance(t);u.rate=1;speechSynthesis.speak(u)}catch(e){}
+  speak(t);
   lastSpeak=now;
 }
 function show(id){['home','res'].forEach(function(s){$(s).hidden=s!==id})}
 function chips(){var c=$('chips');c.innerHTML='';['left','right'].forEach(function(e){if(results[e]){var s=document.createElement('span');s.className='chip';s.textContent=(e==='left'?'Left':'Right')+' ear: '+results[e].label;c.appendChild(s)}})}
 
 async function startCam(){
+  unlock();
   try{
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1440}},audio:false});
   }catch(e){
@@ -118,19 +139,25 @@ async function startCam(){
   }
   var v=$('v');v.srcObject=stream;await v.play().catch(function(){});
   $('cam').hidden=false;prev=null;okSince=0;busy=false;lastMsg='';torchOn=false;
-  try{var tr=stream.getVideoTracks()[0];var cp=tr.getCapabilities&&tr.getCapabilities();$('torch').hidden=!(cp&&cp.torch)}catch(e){}
+  torchOK=false;torchTried=false;try{var tr=stream.getVideoTracks()[0];var cp=tr.getCapabilities&&tr.getCapabilities();torchOK=!!(cp&&cp.torch)}catch(e){}$('torch').hidden=false;$('torch').disabled=!torchOK;$('torch').textContent=torchOK?'💡 Light':'No flash access';
   try{navigator.wakeLock&&navigator.wakeLock.request('screen')}catch(e){}
   var side=ear==='left'?'left':'right';
   say('Hold the phone so the back camera faces your '+side+' ear, about a hand’s width away. I’ll guide you.',true);
   setTimeout(function(){loop=setInterval(tick,250)},5000);
 }
 function stopCam(){
-  clearInterval(loop);loop=null;try{speechSynthesis.cancel()}catch(e){}
+  clearInterval(loop);loop=null;clearInterval(window.cdT);try{speechSynthesis.cancel()}catch(e){}
   if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}
   $('cam').hidden=true;
 }
 $('start').onclick=startCam;$('stop').onclick=stopCam;
-$('torch').onclick=function(){try{torchOn=!torchOn;stream.getVideoTracks()[0].applyConstraints({advanced:[{torch:torchOn}]})}catch(e){}};
+$('vTest').onclick=function(){voice=true;$('vOn').classList.add('on');$('vOff').classList.remove('on');unlock();if(!ttsOK){$('vNote').textContent='This view has no speech voice, so you’ll hear beeps instead. Open the page’s link directly in Safari or Chrome.';beep(660,.2);return}speak('Voice is working. I will guide you to position the phone.');$('vNote').textContent='Playing a test. If you hear nothing, raise the volume, turn off silent mode, or open the page’s link directly in Safari or Chrome.'};
+function haptic(){try{if(navigator.vibrate){navigator.vibrate(120);return}}catch(e){}try{$('hl').click()}catch(e){}}
+function setTorch(on){
+  if(!torchOK||!stream)return Promise.resolve(false);
+  return stream.getVideoTracks()[0].applyConstraints({advanced:[{torch:on}]}).then(function(){torchOn=on;$('torch').textContent=on?'💡 Light on':'💡 Light';return true}).catch(function(){return false});
+}
+$('torch').onclick=function(){setTorch(!torchOn)};
 
 function metrics(){
   var v=$('v');if(!v.videoWidth)return null;
@@ -149,7 +176,7 @@ function metrics(){
   var m={lum:lum/n,skin:skin/n,sharp:grad/gn/2,motion:prev?diff/n:99};prev=g;return m;
 }
 function judge(m){
-  if(m.lum<55)return{c:'dark',t:'It’s too dark. Turn on the light button, or face a window.',ok:0};
+  if(m.lum<55)return{c:'dark',t:'It’s too dark. Face a window or turn on a room light.',ok:0};
   if(m.lum>215)return{c:'bright',t:'Too bright. Turn away from the direct light.',ok:0};
   if(m.skin<.25)return{c:'noear',t:'I can’t see your ear. Move the phone toward it.',ok:0};
   if(m.skin<.5)return{c:'closer',t:'Move a little closer to your ear.',ok:0};
@@ -160,22 +187,35 @@ function judge(m){
 function tick(){
   if(busy)return;var m=metrics();if(!m||m.motion===99)return;
   var j=judge(m);
+  if(j.c==='dark'&&torchOK&&!torchOn&&!torchTried){torchTried=true;setTorch(true);j.t='It’s dark. Turning on the light.'}
+  else if(j.c==='bright'&&torchOn){setTorch(false);j.t='Too bright. Turning the light off.'}
   $('ring').style.setProperty('--c',j.ok?'#46d39a':(j.c==='steady'||j.c==='blur'||j.c==='closer')?'#f0b840':'#ff6b5e');
   if(j.c!==lastMsg||Date.now()-lastSpeak>7000){lastMsg=j.c;say(j.t,j.c!==lastMsg)}else $('say').textContent=j.t;
-  if(j.ok){if(!okSince)okSince=Date.now();if(Date.now()-okSince>1400){snap(true)}}else okSince=0;
+  if(j.ok){if(!okSince){okSince=Date.now();haptic()}if(Date.now()-okSince>1400){snap(true)}}else okSince=0;
 }
 function snap(auto){
   if(busy)return;busy=true;
   var v=$('v'),c=$('w');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
   var url=c.toDataURL('image/jpeg',.92);
-  say(auto?'Got it.':'Photo taken.',true);
+  haptic();say(auto?'Got it.':'Photo taken.',true);
   stopCam();finish(url);
 }
 $('snap').onclick=function(){snap(false)};
 $('timer').onclick=function(){
-  var n=5;clearInterval(loop);loop=null;
-  var t=setInterval(function(){n--;if(n>0){say(String(n),true)}else{clearInterval(t);snap(false)}},1000);
-  say('Taking the photo in 5. Get in position.',true);
+  if(busy)return;
+  var n=5,base=torchOn;clearInterval(loop);loop=null;
+  function pulse(){
+    haptic();
+    if(!voice||!ttsOK)beep(n>1?700:1000,.12);
+    if(torchOK){setTorch(!base);setTimeout(function(){setTorch(base)},250)}
+  }
+  window.cdT=setInterval(function(){
+    n--;
+    if(n>1){say(String(n),true);pulse()}
+    else if(n===1){say('1',true);setTorch(true)}
+    else{clearInterval(window.cdT);snap(false)}
+  },1000);
+  say('Taking the photo in 5. Get in position.',true);pulse();
 };
 
 $('file').onchange=function(e){
